@@ -1,0 +1,5 @@
+services:
+  storeops:
+    build: .
+    ports:
+      - "8080:8080"
