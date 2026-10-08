@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn:*)", "Bash(./mvnw:*)", "Bash(python3 .harness/scripts/*)", "Bash(.harness/scripts/*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git add:*)", "Bash(git commit:*)",
+      "Bash(cp .harness/output/*)", "Bash(wc:*)", "Bash(grep:*)", "Bash(cat:*)", "Bash(ls:*)", "Bash(mkdir:*)",
+      "Edit(src/**)", "Edit(.harness/output/**)", "Edit(.harness/reviews/**)"
+    ],
+    "deny": [
+      "Edit(.harness/agents/**)", "Edit(.harness/skills/**)", "Edit(.harness/eval/**)", "Edit(.harness/scripts/**)",
+      "Edit(config/**)", "Edit(pom.xml)", "Bash(git push:*)"
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+@planner Add shift handover bulk update: PATCH /api/activities/bulk-status lets outgoing shift staff mark multiple operational activities as DONE or BLOCKED in a single request, with partial-failure handling (per-item result, one failing item must not abort the others) and one audit entry per successfully updated activity.
