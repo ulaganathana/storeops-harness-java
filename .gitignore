@@ -1,5 +1,5 @@
 target/
 .idea/
 *.iml
-.harness/output/
+.harness/output/*
 !.harness/output/.gitkeep
