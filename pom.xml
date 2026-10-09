@@ -17,6 +17,8 @@
     <java.version>17</java.version>
     <archunit.version>1.3.0</archunit.version>
     <jacoco.version>0.8.12</jacoco.version>
+    <!-- collect-gates.py passes -Dcheckstyle.failOnViolation=false so one lint error cannot hide ArchUnit/JaCoCo results -->
+    <checkstyle.failOnViolation>true</checkstyle.failOnViolation>
   </properties>
 
   <dependencies>
@@ -45,7 +47,7 @@
           <configLocation>config/checkstyle.xml</configLocation>
           <suppressionsLocation>config/checkstyle-suppressions.xml</suppressionsLocation>
           <consoleOutput>true</consoleOutput>
-          <failOnViolation>true</failOnViolation>
+          <failOnViolation>${checkstyle.failOnViolation}</failOnViolation>
           <violationSeverity>warning</violationSeverity>
         </configuration>
         <executions>

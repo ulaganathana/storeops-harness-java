@@ -83,7 +83,7 @@ D2 carries FM3 and build health.
 (4) Malformed Evaluator output is treated as FAIL by the orchestrator.
 
 **Worked example.** Generator output *X*: all tools green; A6–A8, T4–T6 PASS; T3 → Evaluator finds AC-1.3 asserted only `status().isOk()` and writes `T3=FAIL`.
-Script: hard gate T3 failed ⇒ `VERDICT: FAIL` even though the score is 93. Re-running on the same `checks.env` yields the same bytes (verified). Output *Y*: two soft checks fail (A6, A7), no hard gate fails ⇒ score 86 ⇒ `PASS`
+Script: hard gate T3 failed ⇒ `VERDICT: FAIL` even though the score is 92. Re-running `compute-verdict.sh` on the same `checks.env` yields byte-identical output (checked with md5 on repeated runs; keep a sample under `.harness/reviews/` as evidence). Output *Y*: two soft checks fail (A6, A7), no hard gate fails ⇒ score 86 ⇒ `PASS`
 (`CONDITIONAL PASS` would need 70–84).
 
 **Escalation.** Triggered by the 3rd consecutive `FAIL` in a sprint. The orchestrator writes `.harness/output/escalation.md` (sprint, iterations, last score, blocking gates, recurring failures,

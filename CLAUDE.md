@@ -30,10 +30,10 @@ Invoke with: *"Read `.harness/agents/<name>.agent.md` and follow it exactly. Spr
 
 | Agent | Definition | Reads (skills + handoffs) | Writes | May edit `src/`? |
 |---|---|---|---|---|
-| Planner | `.harness/agents/planner.agent.md` | PROMPT.md | `.harness/output/spec.md`, `sprint-N-contract.md` | No |
-| Generator | `.harness/agents/generator.agent.md` | contract (+ prior feedback) | `src/`, `generator-summary.md` | **Yes (only agent)** |
-| Evaluator | `.harness/agents/evaluator.agent.md` | contract, generator-summary, diff | `evaluator-feedback.md`, `checks.env` | **Never** |
-| Monitor | `.harness/agents/monitor.agent.md` | evaluator-feedback, generator-summary | `.harness/reviews/sprint-N-run-log.md` | No |
+| Planner | `.harness/agents/planner.agent.md` | skills: app-context, architecture-principles, sprint-decomposition; handoff: PROMPT.md | `.harness/output/spec.md`, `sprint-N-contract.md` | No |
+| Generator | `.harness/agents/generator.agent.md` | skills: app-context, architecture-principles, coding-conventions, how-to-test, api-integration; handoff: contract (+ prior feedback, carry-over warnings) | `src/`, `generator-summary.md` | **Yes (only agent)** |
+| Evaluator | `.harness/agents/evaluator.agent.md` | skills: architecture-principles, how-to-review, grading-criteria; handoff: contract, generator-summary, `git diff` | `evaluator-feedback.md`, `checks.env` | **Never** |
+| Monitor | `.harness/agents/monitor.agent.md` | skill: app-context; handoff: evaluator-feedback, generator-summary, prior run-logs | `.harness/reviews/sprint-N-run-log.md` | No |
 
 The Generator never grades itself; the Evaluator never edits code. Never merge these roles.
 
