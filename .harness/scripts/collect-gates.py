@@ -1,76 +1,88 @@
 #!/usr/bin/env python3
-"""Deterministic gate collector. Runs the toolchain once and writes AUTO check results.
+"""Run deterministic harness gates and write their CSV results."""
 
-Writes:  .harness/output/checks.env       (A1..A4, T1, T2, T5 = PASS|FAIL)
-         .harness/output/gate-details.txt (file:line evidence for failures)
-         .harness/output/gate-log.txt     (raw maven output)
-"""
-import glob, os, re, subprocess, sys
-import xml.etree.ElementTree as ET
+import csv
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
-OUT = ".harness/output"
-os.makedirs(OUT, exist_ok=True)
-res, details = {}, []
+ROOT = Path(__file__).resolve().parents[2]
+OUTPUT = ROOT / ".harness" / "output" / "check-results.csv"
+PYTHON = sys.executable
 
-def run(cmd):
+
+def maven_command():
+    configured = os.environ.get("MAVEN_CMD")
+    if configured:
+        if configured.lower().endswith((".cmd", ".bat")):
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/c", configured]
+        return [configured]
+    executable = shutil.which("mvn") or shutil.which("mvn.cmd")
+    if executable:
+        if executable.lower().endswith((".cmd", ".bat")):
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/c", executable]
+        return [executable]
+    temporary_maven = Path(os.environ.get("TEMP", "")) / "apache-maven-3.9.9" / "bin" / "mvn.cmd"
+    if temporary_maven.is_file():
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", str(temporary_maven)]
+    return ["mvn"]
+
+
+def run_gate(command, description):
+    print(f"RUN: {' '.join(command)}")
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True)
-        return p.returncode, p.stdout + p.stderr
-    except FileNotFoundError:
-        return 127, f"command not found: {cmd[0]}"
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except FileNotFoundError as error:
+        print(f"BLOCKED: {description}: {error}")
+        return "BLOCKED", f"{description}: executable unavailable"
 
-mvn = "./mvnw" if os.path.exists("mvnw") else "mvn"
-rc, log = run([mvn, "-B", "-fae", "verify", "-Dcheckstyle.failOnViolation=false"])
-open(f"{OUT}/gate-log.txt", "w").write(log)
+    log_path = ROOT / ".harness" / "output" / f"{description}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(completed.stdout, encoding="utf-8")
+    result = "PASS" if completed.returncode == 0 else "FAIL"
+    print(f"{result}: {description} (exit {completed.returncode}; {log_path.relative_to(ROOT)})")
+    return result, str(log_path.relative_to(ROOT))
 
-# --- Checkstyle ---
-cs_total, raw_throws = 0, 0
-for f in glob.glob("target/checkstyle-result.xml"):
-    for file_el in ET.parse(f).getroot().iter("file"):
-        for err in file_el.iter("error"):
-            cs_total += 1
-            rel = os.path.relpath(file_el.get("name"))
-            details.append(f"CHECKSTYLE {rel}:{err.get('line')} {err.get('message')}")
-            if "RawThrow" in (err.get("message") or ""):
-                raw_throws += 1
 
-# --- ArchUnit via surefire XML ---
-arch = {}
-for f in glob.glob("target/surefire-reports/TEST-*ArchitectureTest.xml"):
-    for tc in ET.parse(f).getroot().iter("testcase"):
-        m = re.match(r"(A\d)_", tc.get("name"))
-        if not m:
-            continue
-        bad = tc.find("failure") is not None or tc.find("error") is not None
-        arch.setdefault(m.group(1), []).append(not bad)
-        if bad:
-            el = tc.find("failure") if tc.find("failure") is not None else tc.find("error")
-            details.append(f"ARCHUNIT {tc.get('name')}: {(el.get('message') or '')[:600]}")
+def main():
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    results = {}
 
-def arch_ok(k):
-    return bool(arch.get(k)) and all(arch[k])
+    mvn = maven_command()
+    test_result, test_evidence = run_gate(mvn + ["-B", "test"], "maven-test")
+    verify_result, verify_evidence = run_gate(mvn + ["-B", "verify"], "maven-verify")
+    hygiene_result, hygiene_evidence = run_gate(
+        [PYTHON, ".harness/scripts/verify-disabled-tests.py"], "disabled-test-check"
+    )
 
-res["A1"] = arch_ok("A1")
-res["A2"] = arch_ok("A2") and raw_throws == 0
-res["A3"] = arch_ok("A3")
-res["A4"] = arch_ok("A4")
-res["T1"] = rc == 0 and cs_total == 0
-res["T2"] = "All coverage checks have been met" in log
-disabled = []
-for f in glob.glob("src/test/**/*.java", recursive=True):
-    for i, line in enumerate(open(f), 1):
-        if re.search(r"@Disabled|@Ignore", line):
-            disabled.append(f"{f}:{i}")
-res["T5"] = not disabled
-details += [f"DISABLED_TEST {d}" for d in disabled]
-if "Coverage checks have not been met" in log:
-    details += [l.strip() for l in log.splitlines() if "Rule violated" in l]
-if rc != 0:
-    details += [l.strip() for l in log.splitlines() if l.startswith("[ERROR]")][:25]
+    results["A1"] = (verify_result, verify_evidence)
+    results["A2"] = (verify_result, verify_evidence)
+    results["A3"] = ("BLOCKED", "LLM review evidence not supplied by gate collector")
+    results["A4"] = ("BLOCKED", "LLM review evidence not supplied by gate collector")
+    results["T1"] = (test_result, test_evidence)
+    results["T2"] = (verify_result, verify_evidence)
+    results["T3"] = ("BLOCKED", "LLM AC-to-business assertion evidence not supplied")
+    results["T4"] = ("BLOCKED", "LLM service-error branch review not supplied")
+    results["T5"] = (hygiene_result, hygiene_evidence)
+    results["T6"] = ("BLOCKED", "Generator summary and AC traceability not supplied")
 
-with open(f"{OUT}/checks.env", "w") as fh:
-    for k in sorted(res):
-        fh.write(f"{k}={'PASS' if res[k] else 'FAIL'}\n")
-open(f"{OUT}/gate-details.txt", "w").write("\n".join(details) + "\n")
-print(open(f"{OUT}/checks.env").read())
-sys.exit(0)
+    with OUTPUT.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["id", "result", "evidence"])
+        for check_id in ("A1", "A2", "A3", "A4", "T1", "T2", "T3", "T4", "T5", "T6"):
+            writer.writerow([check_id, *results[check_id]])
+    print(f"Gate results written to {OUTPUT.relative_to(ROOT)}")
+    return 1 if any(state != "PASS" for state, _ in results.values()) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

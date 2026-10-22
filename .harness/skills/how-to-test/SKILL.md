@@ -1,33 +1,36 @@
-# Skill: how to test StoreOps (Generator)
+# How to test StoreOps changes
 
-**Purpose:** tests must prove **business rules**, not that Spring returns 200 (FM3).
+## Commands
 
-## Tooling
-JUnit 5, AssertJ, Spring MockMvc (`@SpringBootTest @AutoConfigureMockMvc`, see `StoreOpsApiTest`). Unit tests construct services with
-`InMemory*Repository` and the test double `com.storeops.shared.RecordingEventBus` (see `ActivityServiceTest`).
+- `mvn test`: compile and run unit/integration tests.
+- `mvn verify`: Checkstyle plus tests and configured JaCoCo thresholds.
+- `mvn spring-boot:run`: start the API on port 8080.
+- `python .harness/scripts/verify-disabled-tests.py`: fail if tests are
+  disabled or ignored.
+- `python .harness/scripts/collect-gates.py`: run deterministic checks and
+  write `.harness/output/check-results.csv`; unavailable tools remain BLOCKED.
+- `docker build -t storeops:local .` and `docker run --rm -p 8080:8080
+  storeops:local`: container smoke test when Docker is installed.
 
-## Coverage thresholds (JaCoCo, enforced in `mvn verify`)
-service packages ≥ **80%** line · controller packages ≥ **70%** · `shared.*` ≥ **60%** · overall ≥ **70%**.
+## Evidence expected
 
-## What every AC test must assert (at least one of)
-1. **State:** the persisted entity/field after the action (`repo.findById(id).getStatus()`).
-2. **Event:** `bus.ofType(EventTypes.X)` size and payload keys (`containsEntry("to","BLOCKED")`).
-3. **Audit entry:** the audit record exists per item changed (if the feature defines one).
-4. **Typed error:** `assertThatThrownBy(...).isInstanceOf(ConflictError.class)` **and**, at HTTP level, `jsonPath("$.code", is("CONFLICT"))`.
-A test whose only assertion is `status().isOk()` / `isCreated()` does **not** satisfy an AC (T3 hard gate).
+Tests assert business outcomes, not only status codes. For an activity batch,
+cover mixed success/failure, subsequent-item processing, stable request-order
+results, unsupported target status, empty/invalid input, missing and
+cross-store activities, duplicate IDs as specified, and exactly one audit
+entry per successful change. Verify the persisted status and actor/time audit
+fields. Verify failed items leave state and audit history unchanged.
 
-## Required test set per feature
-- Happy path with business outcome. - Every `AppError` branch in each new service method. - Authorization branch per role used.
-- Event emitted exactly once per changed item; **no** event when nothing changed.
-- Partial-failure features: assert both the succeeded and failed items individually.
+MockMvc tests must include `X-User-Id`, parse the response body, and cover
+missing/unknown users plus store isolation. Test each service-level
+`AppError` path. Add explicit null/empty edge cases only where accepted by the
+request contract.
 
-## Pattern
-```java
-@Test void blockingEmitsStatusChangedWithOwner() {
-    Activity a = create("s-1", "Planogram reset"); bus.events().clear();
-    service.update("s-3", a.getId(), new UpdateActivityRequest(TaskStatus.BLOCKED, null, null, null));
-    assertThat(bus.ofType(EventTypes.ACTIVITY_STATUS_CHANGED)).hasSize(1);
-    assertThat(bus.events().get(0).payload()).containsEntry("to", "BLOCKED").containsEntry("ownerId", "s-1");
-}
-```
-Never add `@Disabled`/`@Ignore` (T5). Never weaken or delete an existing assertion to make a test pass.
+## Coverage and quality
+
+JaCoCo thresholds: service 80%, routes 70%, shared utility 60%, overall 70%
+line coverage. Never disable tests to get a green build. Run the narrow
+relevant test during development and `mvn test` as the requested final test;
+run `mvn verify` where coverage and lint confidence are required. Record the
+exact command and result in run evidence; unavailable tools are BLOCKED, not
+PASS.

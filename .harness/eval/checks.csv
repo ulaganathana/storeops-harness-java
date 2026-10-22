@@ -1,15 +1,11 @@
 id,dimension,hard,source,description
-A1,D1,Y,AUTO,ArchUnit: zero cross-module repository imports + no module cycles (ArchitectureTest A1_*)
-A2,D1,Y,AUTO,Zero raw throws in service/controller: Checkstyle RawThrow + ArchUnit (ArchitectureTest A2_*)
-A3,D1,Y,AUTO,ArchUnit: no cross-module dependency on alerts/reports packages (ArchitectureTest A3_*)
-A4,D1,Y,AUTO,ArchUnit: layer separation controller->service->repository (ArchitectureTest A4_*)
-A5,D1,Y,LLM,Reports module performs zero write calls to other modules
-A6,D1,N,LLM,Every cross-module side effect uses eventBus.emit with a type registered in EventTypes
-A7,D1,N,LLM,Each thrown AppError subclass matches the case (404 NotFound / 400 Validation / 403 Forbidden / 409 Conflict)
-A8,D1,N,LLM,generator-summary lists the correct layer for every changed file
-T1,D2,Y,AUTO,mvn verify exit 0 and zero Checkstyle violations (includes SpotBugs and JaCoCo)
-T2,D2,Y,AUTO,JaCoCo thresholds met (service 80 / controller 70 / shared 60 / overall 70)
-T3,D2,Y,LLM,Every acceptance criterion has at least one test asserting a business outcome (state / event / audit) not only an HTTP status
-T4,D2,N,LLM,Error paths of every new service method are tested (each AppError branch)
-T5,D2,N,AUTO,No @Disabled or @Ignore tests in src/test
-T6,D2,N,LLM,generator-summary AC self-check table covers every AC id in the sprint contract
+A1,D1,true,AUTO,Module boundary test passes with zero forbidden feature imports
+A2,D1,true,AUTO,No raw exceptions are thrown from route or service code
+A3,D1,true,LLM,Reports is read-only and cross-module side effects are published through EventBus rather than direct service imports
+A4,D1,false,LLM,Routes remain thin and service owns batch business rules
+T1,D2,true,AUTO,mvn test succeeds
+T2,D2,true,AUTO,Configured JaCoCo thresholds pass under mvn verify
+T3,D2,true,LLM,Every AC has a test asserting a business state event or audit result
+T4,D2,false,LLM,Every service error branch is exercised
+T5,D2,true,AUTO,No disabled or ignored tests exist
+T6,D2,false,LLM,Generator summary maps every AC and changed file accurately

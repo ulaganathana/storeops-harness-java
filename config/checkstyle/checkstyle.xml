@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+  "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+  "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<module name="Checker">
+  <property name="severity" value="error"/>
+  <property name="charset" value="UTF-8"/>
+
+  <module name="FileTabCharacter"/>
+  <module name="NewlineAtEndOfFile"/>
+  <module name="LineLength">
+    <property name="max" value="120"/>
+    <property name="ignorePattern" value="^(package|import) .*"/>
+  </module>
+
+  <module name="TreeWalker">
+    <module name="AvoidStarImport"/>
+    <module name="UnusedImports"/>
+    <module name="RedundantImport"/>
+    <module name="IllegalImport"/>
+    <module name="ModifierOrder"/>
+    <module name="NeedBraces"/>
+    <module name="UpperEll"/>
+    <!-- Typed error hierarchy: services/routes must throw AppError subclasses, never raw exceptions -->
+    <module name="IllegalInstantiation">
+      <property name="classes"
+                value="java.lang.Exception, java.lang.RuntimeException, java.lang.Error, java.lang.Throwable, java.lang.IllegalArgumentException, java.lang.IllegalStateException"/>
+    </module>
+  </module>
+</module>

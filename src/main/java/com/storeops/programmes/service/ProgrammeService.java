@@ -1,69 +1,71 @@
 package com.storeops.programmes.service;
 
-import com.storeops.programmes.model.AddMemberRequest;
+import com.storeops.common.error.ConflictError;
+import com.storeops.common.error.NotFoundError;
+import com.storeops.common.error.ValidationError;
+import com.storeops.common.events.DomainEvent;
+import com.storeops.common.events.EventBus;
+import com.storeops.common.events.EventType;
+import com.storeops.common.security.CurrentUser;
+import com.storeops.common.util.Ids;
 import com.storeops.programmes.model.CreateProgrammeRequest;
 import com.storeops.programmes.model.Project;
 import com.storeops.programmes.model.ProjectMember;
+import com.storeops.programmes.model.ProjectRole;
 import com.storeops.programmes.repository.ProgrammeRepository;
-import com.storeops.shared.error.ConflictError;
-import com.storeops.shared.error.ForbiddenError;
-import com.storeops.shared.error.NotFoundError;
-import com.storeops.shared.event.EventBus;
-import com.storeops.shared.event.EventTypes;
-import com.storeops.staff.model.Staff;
-import com.storeops.staff.model.StaffRole;
-import com.storeops.staff.service.StaffService;
+import com.storeops.staff.api.StaffReader;
 import java.util.List;
-import java.util.Map;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ProgrammeService {
+
     private final ProgrammeRepository repository;
+    private final StaffReader staffReader;
     private final EventBus eventBus;
-    private final StaffService staffService;
 
-    public ProgrammeService(ProgrammeRepository repository, EventBus eventBus, StaffService staffService) {
+    public ProgrammeService(ProgrammeRepository repository, StaffReader staffReader, EventBus eventBus) {
         this.repository = repository;
+        this.staffReader = staffReader;
         this.eventBus = eventBus;
-        this.staffService = staffService;
     }
 
-    public List<Project> listForStore(String staffId) {
-        return repository.findByStoreId(staffService.getById(staffId).storeId());
+    public List<Project> list(CurrentUser user) {
+        return repository.findByStoreId(user.storeId());
     }
 
-    public Project create(String staffId, CreateProgrammeRequest request) {
-        Staff caller = staffService.getById(staffId);
-        if (caller.role() != StaffRole.STORE_MANAGER && caller.role() != StaffRole.DEPARTMENT_LEAD) {
-            throw new ForbiddenError("Only store managers and department leads can create programmes");
-        }
-        Project project = new Project();
-        project.setName(request.name());
-        project.setStoreId(caller.storeId());
-        project.setOwnerId(caller.id());
-        Project saved = repository.save(project);
-        eventBus.emit(EventTypes.PROGRAMME_CREATED, Map.of("programmeId", saved.getId()));
-        return saved;
+    public Project create(CurrentUser user, CreateProgrammeRequest request) {
+        Project programme = new Project(
+                Ids.next("prg"), request.name(), request.description(), user.storeId(), List.of());
+        return repository.save(programme);
     }
 
-    public Project addMember(String staffId, String programmeId, AddMemberRequest request) {
-        Staff caller = staffService.getById(staffId);
-        Project project = repository.findById(programmeId)
-            .orElseThrow(() -> new NotFoundError("Programme", programmeId));
-        boolean allowed = caller.id().equals(project.getOwnerId())
-            || (caller.role() == StaffRole.STORE_MANAGER && caller.storeId().equals(project.getStoreId()));
-        if (!allowed) {
-            throw new ForbiddenError("Only the programme owner or a store manager of the store can add members");
+    public Project addMember(CurrentUser user, String programmeId, String staffId) {
+        Project programme = repository.findById(programmeId)
+                .filter(found -> found.storeId().equals(user.storeId()))
+                .orElseThrow(() -> new NotFoundError("programme", programmeId));
+        CurrentUser member = staffReader.findById(staffId)
+                .orElseThrow(() -> new NotFoundError("staff", staffId));
+        if (!member.storeId().equals(programme.storeId())) {
+            throw new ValidationError("staff member belongs to a different store");
         }
-        Staff target = staffService.getById(request.staffId());
-        boolean duplicate = project.getMembers().stream().anyMatch(m -> m.staffId().equals(target.id()));
-        if (duplicate) {
-            throw new ConflictError("Staff '" + target.id() + "' is already a member of programme '" + programmeId + "'");
+        if (programme.hasMember(staffId)) {
+            throw new ConflictError("staff member is already in programme " + programmeId);
         }
-        project.getMembers().add(new ProjectMember(target.id(), request.role()));
-        Project saved = repository.save(project);
-        eventBus.emit(EventTypes.MEMBER_ADDED, Map.of("programmeId", programmeId, "staffId", target.id()));
-        return saved;
+        ProjectRole role = projectRoleFor(member);
+        Project updated = repository.save(programme.withMember(new ProjectMember(staffId, role)));
+        eventBus.publish(DomainEvent.of(EventType.PROGRAMME_MEMBER_ADDED, staffId,
+                "You were added to programme: " + programme.name()));
+        return updated;
+    }
+
+    private ProjectRole projectRoleFor(CurrentUser member) {
+        return switch (member.role()) {
+            case STORE_MANAGER -> ProjectRole.STORE_MANAGER;
+            case DEPARTMENT_LEAD -> ProjectRole.DEPARTMENT_LEAD;
+            case ASSOCIATE -> ProjectRole.ASSOCIATE;
+            case REGIONAL_MANAGER -> throw new ValidationError(
+                    "regional managers cannot be added to a store programme");
+        };
     }
 }

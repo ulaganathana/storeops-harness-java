@@ -1,41 +1,48 @@
-# Skill: sprint decomposition (Planner)
+# Sprint decomposition
 
-**Purpose:** how to split a StoreOps feature into sprints and write testable acceptance criteria.
+Turn the exact developer prompt into a short, testable spec and ordered sprint
+contracts. Do not implement code. Preserve prompt scope; list assumptions,
+risks, exclusions, affected modules, endpoints, errors, events, and data
+changes. When a contract choice changes API behavior, make that choice
+explicit instead of leaving it to the Generator.
 
-## Sprint boundary rules
-1. One sprint = one **vertical, independently verifiable slice** that leaves `mvn -B verify` green.
-2. Order: **Sprint 1 = domain + service + repository + events** (no HTTP); **Sprint 2 = controller + request/response contract + API tests**.
-   Rationale: the architectural risks (FM1, FM2, FM4) live in service/repository code, so they are gated before any HTTP code exists.
-3. If a feature adds a new event type or cross-module consumer, that is its own sprint item with its own AC naming the event and payload.
-4. At most **6 ACs per sprint**; if more, split. Max 3 sprints per run.
+## Required spec format
 
-## AC format (mandatory)
-```
-AC-<sprint>.<n>: <short title>
-GIVEN <concrete initial state with ids/roles/statuses>
-WHEN  <one action: service call or HTTP request with exact path/body>
-THEN  <observable outcome 1: state or response body field>
-AND   <observable outcome 2: event emitted / audit entry / error type + status>
-```
-An AC is **testable** only if every THEN names something an assertion can read: a field value, a list size, an `AppError` subclass + code,
-an `eventBus.emit` type and payload key. Words like "works", "handles", "appropriately" are forbidden.
-Every sprint must include at least one **error-path AC** (names the `AppError` subclass) and at least one **business-rule AC** (not just 2xx).
+The first line is exactly `STATUS: AWAITING APPROVAL`. Include `FEATURE_PROMPT`,
+Goal, Out of scope, Affected modules, API contract, Data/audit contract,
+Security, Sprint list, Risks, and unresolved decisions. Do not label a
+specification APPROVED on the developer's behalf.
 
-## Contract file format — `.harness/output/sprint-N-contract.md`
-```
-SPRINT: N
+## Sprint contract format
+
+Each contract includes:
+
+```text
+SPRINT: <number>
 SPEC: .harness/output/spec.md
-FEATURE_PROMPT: PROMPT.md
-GOAL: <one sentence>
-LAYERS_IN_SCOPE: <model, repository, service, controller>
-FILES_EXPECTED: <package paths>
-FAILURE_MODES_EXPOSED: <FM1..FM4 relevant>
-GATES_IN_SCOPE: <A1..A8, T1..T6>
-## Acceptance criteria
-AC-N.1 ...
-## Out of scope
+GATES_IN_SCOPE: <space-separated IDs>
+FILES_EXPECTED: <paths, one per line>
 ```
 
-## spec.md sections
-`STATUS: AWAITING APPROVAL` (line 1) · `FEATURE_PROMPT: PROMPT.md` · Goal · Out of scope · Affected modules · Endpoints · New event types
-(name + payload keys) · Sprint list with one-line rationale per boundary · Risks.
+List acceptance criteria under `ACs`. Give every criterion a stable
+`AC-<sprint>.<number>` ID and exactly observable GIVEN/WHEN/THEN behavior.
+Include success, business-rule, validation, authorization, and failure
+outcomes. Every AC must be testable by an assertion of resulting state,
+response data, event, or audit record—not solely HTTP status.
+
+## Split rules
+
+Split only when the risk or contract boundary justifies a separate sprint.
+For the bulk-status demonstration, Sprint 1 owns service rules, item results,
+scoped repository changes, audit records, and unit tests. Sprint 2 owns the
+HTTP DTO/controller, response mapping, authentication integration tests, and
+API documentation. Sprint 2 depends on Sprint 1. Do not split one logical
+acceptance criterion across sprints.
+
+## Batch semantics to settle in the spec
+
+Specify supported status values, invalid top-level request behavior,
+per-item not-found/foreign-store behavior, duplicate IDs, request ordering,
+whether processing continues after item failure, result schema, and what
+counts as the audit record. Prefer a durable in-process repository record over
+calling an event notification an audit. No implicit whole-batch rollback.

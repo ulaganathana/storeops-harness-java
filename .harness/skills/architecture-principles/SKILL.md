@@ -1,16 +1,23 @@
-# Skill: StoreOps architecture principles (shared by all agents)
+# StoreOps architecture principles
 
-**Purpose:** the non-negotiable architecture rules. Each maps to a failure mode seen in the client's earlier AI experiment and to a gate.
+1. **Keep feature ownership local.** Routes validate and map HTTP, services own
+   business rules, repositories own persistence. Do not move service logic
+   into controllers.
+2. **Keep feature modules independent.** A feature can use `common` and the
+   read-only `staff.api`; it cannot depend on another feature module's
+   repositories, services, routes, or models. Cross-module notifications use
+   the shared event bus.
+3. **Use application errors.** Throw an appropriate `AppError` subclass from
+   application layers. Do not throw raw Java exceptions from routes/services.
+4. **Enforce store isolation at the service boundary.** Authenticate each
+   request and scope reads and writes to the caller's store. Avoid revealing
+   whether a foreign-store record exists.
+5. **Make side effects observable and minimal.** A committed activity change
+   has one corresponding audit record; failed items have none. Event
+   publication is not, by itself, durable audit storage.
+6. **Keep deterministic contracts.** Preserve caller request order in batch
+   results, define duplicate-ID behavior, and make each result independently
+   interpretable without relying on log order.
 
-| Rule | Statement | FM | Gate |
-|---|---|---|---|
-| R1 Module boundary | No class outside `com.storeops.X..` may import `com.storeops.X.repository..`. Cross-module **reads** call `X.service` only. | FM1 | A1 (ArchUnit) |
-| R2 Error contract | In `..service..` and `..controller..` never `throw new RuntimeException/Exception/IllegalStateException/IllegalArgumentException/Error`. Use `NotFoundError`(404) `ValidationError`(400) `ForbiddenError`(403) `ConflictError`(409), all `extends AppError(code,message,statusCode)`. | FM2 | A2 (Checkstyle `RawThrow` + ArchUnit) |
-| R3 Event bus only | Cross-module **side effects** are `eventBus.emit(EventTypes.X, payload)`. Never import/call `AlertService` or any `reports` class from another module. New event types are added to `EventTypes` first. | FM4 | A3 (ArchUnit), A6 |
-| R4 Layer separation | controller → service → repository. Controllers contain no business logic and never touch repositories; repositories never use HTTP types or call other services. | — | A4 (ArchUnit) |
-| R5 Read-only reports | `reports` aggregates via other modules' **service read methods** and never calls a write method (`save/create/update/delete/add*`) on them. | — | A5 (LLM, hard) |
-| R6 Business-outcome tests | Every acceptance criterion has a test asserting state / emitted events / audit entries, not only `status().isOk()`. | FM3 | T3 (LLM, hard) |
-
-**Example (R1+R3 together).** SLA breach from `activities`:
-`eventBus.emit(EventTypes.SLA_BREACH, Map.of("recipientId", leadId, "activityId", id));` ✔
-`alertService.notify(...)` or `new InMemoryAlertRepository().save(...)` inside `activities` ✘ (A3/A1 hard-gate failure).
+Use the existing package names and helpers before adding abstractions. Any
+intentional relaxation must be specified and approved before implementation.

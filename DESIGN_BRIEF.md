@@ -1,108 +1,152 @@
-# Harness Design Brief — StoreOps Claude Code Harness (Java)
+# StoreOps Claude Code Harness — Design Brief
 
-> **DRAFT STATUS — read before submitting.** Sections B, C, D describe the harness as built and are ready to adapt. Section A contains a *worked example
-> contract written before the run*: after your demonstration run, replace it with the real `sprint-1-contract.md` entry and correct any sprint boundaries
-> that changed. The rationale and assumptions must be yours — reviewers will probe them.
+## A. Intent decomposition
 
-## A. Intent Decomposition
+**Feature under test.** The run uses the committed feature prompt: shift
+handover bulk update through `PATCH /api/activities/bulk-status`. Outgoing
+shift staff can request DONE or BLOCKED for multiple activities. Each ID
+produces an independent result, a failing item does not abort later items,
+and each successful update produces one audit entry.
 
-**Feature (PROMPT.md):** shift handover bulk update — `PATCH /api/activities/bulk-status`, partial failures, one audit entry per updated activity.
+**Why this feature is a useful harness test.** The feature crosses request
+validation, store-scoped authorization, status mutation, batch result
+semantics, and audit integrity. A happy-path-only test could return HTTP 200
+while updating the wrong store, lose one item on error, or create duplicate
+audit entries. The contract therefore requires assertions over state and
+audit records for every branch, not merely response status.
 
-**Agents.** The Planner owns *what* (spec + contracts), the Generator owns *how* (only agent that edits `src/`), the Evaluator owns *whether* (never edits code),
-the Monitor owns *what happened* (never judges). Each responsibility was derived from a separate failure of the client's experiment: unreviewed generation,
-self-graded generation, and no record of why code was accepted.
+**Roles and separation.** Planner owns the specification and sprint
+contracts; Generator owns implementation; Evaluator owns independent
+assessment; Monitor owns the audit narrative. The orchestrator controls
+approval, routing, evidence capture, and iteration limits, but does not
+rewrite agent findings. Separating these roles prevents the implementer from
+grading its own work and prevents an evaluator from silently repairing the
+code it is meant to judge.
 
-**Sprint boundaries.** Sprint 1 = model + service + repository + events (no HTTP). Sprint 2 = controller + 207 response contract + API tests.
-The boundary is drawn where the risk changes: FM1/FM2/FM4 (boundary, errors, events) live in service code, so they are gated while the diff is small and
-before HTTP concerns hide them. Sprint 2 can only fail on contract/test issues, which makes escalations easy to diagnose.
+**Sprint boundary.** Sprint 1 covers domain/service behavior, repositories,
+audit representation, item-level failures, and focused tests. Sprint 2 adds
+the HTTP request/response contract, controller integration, endpoint docs,
+and route tests. The split isolates business-rule failures before HTTP
+mapping, while Sprint 2 can validate the final public API against already
+tested service semantics. Sprint 2 depends on Sprint 1.
 
-**GIVEN/WHEN/THEN testability.** Every THEN must name a readable artefact — a field, a list size, an `AppError` subclass+code, an `eventBus.emit` type and payload key.
-Subjective words ("handles", "works") are banned by the sprint-decomposition skill. Each sprint needs ≥1 business-rule AC and ≥1 error-path AC so FM3 cannot hide.
+**Acceptance criteria.** Each criterion uses an AC identifier and observable
+GIVEN/WHEN/THEN statements. A valid result must name changed status, per-item
+result, audit entry count/contents, or absence of writes on failure. The
+Planner must settle duplicate handling, batch status codes, ordering, and
+audit lifetime in the proposed contract and pause for developer approval.
+These choices are not present in the short feature prompt; they are
+assumptions, not facts. The audit storage in this scaffold is process-local
+and must not be represented as durable compliance storage.
 
-**Example contract entry (replace with the real one after the run):**
-```
-SPRINT: 1   SPEC: .harness/output/spec.md   GATES_IN_SCOPE: A1 A2 A3 A6 A7 T3 T4
-AC-1.2: Partial failure does not abort the batch
-GIVEN activities a1 (TODO), a2 (DONE), a3 (IN_PROGRESS) exist and caller is s-3
-WHEN  ActivityService.bulkUpdateStatus("s-3", [a1,a2,a3], BLOCKED) is called
-THEN  the result lists a1=SUCCEEDED, a3=SUCCEEDED, a2=FAILED with error code CONFLICT
-AND   a1 and a3 persist status BLOCKED, a2 remains DONE
-AND   eventBus emitted ACTIVITY_STATUS_CHANGED exactly twice (a1, a3), none for a2
-```
+**Example sprint contract entry (Sprint 1, AC-1.2):**
 
-## B. Governance Framework
+> GIVEN IDs [TODO, DONE, IN_PROGRESS] are requested for BLOCKED  
+> WHEN the service processes the batch  
+> THEN results preserve request order, the DONE item is CONFLICT, the other
+> two activities become BLOCKED, exactly two audit records are written, and
+> exactly two ACTIVITY_STATUS_CHANGED events are published.
 
-**Skill-file strategy (8 files; every file earns its place).**
+## B. Governance framework
 
-| Skill | Read by | Encodes (StoreOps-specific) |
+The skills are separated by stable shared context versus role-specific
+procedure. `app-context` describes the actual Java 21/Spring Boot 3.3
+application and current API. `architecture-principles` states module,
+layering, error, and audit rules. `sprint-decomposition` defines testable
+contracts. Generator-only skills cover coding, tests, and API integration;
+Evaluator-only skills cover evidence review and grading. The additional
+`how-to-review` and `grading-criteria` documents make judgment bounded and
+repeatable rather than embedding review policy in the agent prompt.
+
+This organization avoids role drift while limiting repeated context. Shared
+facts are short and loaded by multiple agents; implementation and review
+depth remains role-specific. Skills describe how to do the work, not
+permission to bypass the approved contract.
+
+**Review archive.** `.harness/reviews/` is committed with the implementation
+and contains the exact prompt, spec, contracts, Generator summary, Evaluator
+feedback, and Monitor log. It makes the path from request to evidence
+inspectable through normal repository access and Git history without relying
+on transient Claude Code chat history. The Monitor compares failed gate IDs
+and iteration trends across sprints to identify rules that need stronger
+skills or automation. `.harness/output/` is ignored scratch state and may be
+regenerated; it is not the audit trail.
+
+**Failure modes covered.** Module imports and layer boundaries are checked
+automatically. Raw exceptions are prohibited in route/service code. Tests
+must assert business outcomes, including successful audit writes and no
+audit write on failures. Direct calls into peer modules are not an acceptable
+substitute for an event bus, though the audit repository itself remains
+owned by the activities module. Any non-automated judgment requires a cited
+file/line; missing evidence is a failure, not a guess.
+
+## C. Non-determinism strategy
+
+Two weighted dimensions total exactly 100%.
+
+| Dimension | Weight | Coverage |
+|---|---:|---|
+| D1 Architectural Compliance | 55% | module boundaries, raw throws, audit ownership, route/service separation |
+| D2 Test and Build Quality | 45% | Maven test/verify, coverage, business assertions, test hygiene |
+
+| Gate | Hard | Evidence and prevented failure |
 |---|---|---|
-| app-context | all four agents | modules, 9 endpoints, seed staff ids, enums, existing events, `mvn -B verify`. Deliberately ≈1 page: it is paid for by every agent every iteration |
-| architecture-principles | Planner, Generator, Evaluator | rules R1–R6 each tied to a failure mode and a gate id |
-| sprint-decomposition | Planner | sprint order rule, AC grammar, contract header markers |
-| coding-conventions | Generator | package layout, `AppError` subclass→status map, `EventBus.emit` pattern, null-safe payloads |
-| how-to-test | Generator | JaCoCo 80/70/60/70, `RecordingEventBus`, "status-only is not an AC" |
-| api-integration | Generator | 207 partial-failure envelope, header auth, `ErrorResponse` shape |
-| how-to-review | Evaluator | yes/no question + evidence format for each LLM check |
-| grading-criteria | Evaluator | dimensions, weights, hard gates, verdict arithmetic |
+| A1 | Yes | `ModuleBoundaryTest`/Maven verify: prevents peer repository imports and cycles (FM1). |
+| A2 | Yes | `ModuleBoundaryTest` and Checkstyle: prevents raw route/service throws bypassing `AppError` (FM2). |
+| A3 | Yes | Evaluator evidence review: prevents direct cross-module side effects bypassing `EventBus` (FM4). |
+| T1 | Yes | `mvn test`: prevents shipping code that does not compile or pass tests. |
+| T2 | Yes | JaCoCo in `mvn verify`: enforces the project's service/route/shared/overall coverage contract. |
+| T3 | Yes | AC-to-business-assertion evidence review: prevents status-only tests (FM3). |
+| T5 | Yes | `verify-disabled-tests.py`: prevents silently skipped tests from inflating confidence. |
 
-Shared-by-all files are the facts and rules that must never diverge between agents; role-specific depth is isolated so only one agent pays its token cost.
-Trade-off acknowledged: deeper skills reduce drift but increase per-invocation cost; depth was concentrated in the two agent-specific skills (`coding-conventions`, `how-to-review`).
+Automated hard gates exist in both dimensions: A1/A2 for D1 and T1/T2/T5
+for D2. Any failed hard gate forces FAIL regardless of weighted score.
 
-**`.harness/reviews/` as audit trail.** Per sprint it holds the generator summary, the final and every failed-iteration evaluator feedback, and the Monitor's `run-log`
-(sprint id, verdict, score, iterations, escalation flag, gates failed per iteration, token estimate, trend notes). It is committed to Git, so the standards team and
-reviewers read it through normal repository access and `git log` gives time order. A recurring problem surfaces when the same gate id appears in
-`HARD_GATES_FAILED_BY_ITERATION` across sprints; the Monitor then names the skill file that should absorb the rule ("skill-file drift signals").
+Each gate result is binary PASS, FAIL, or BLOCKED and is stored with evidence.
+The deterministic script validates the configured check IDs, enforces that
+dimension weights sum to 100, calculates each dimension's fraction of passing
+checks, and then applies the weights. PASS is 85 or above; CONDITIONAL PASS
+is 70 through 84.99; below 70 is FAIL. Any failed or blocked hard gate is
+FAIL. Stable input yields byte-stable score and verdict; the LLM does not do
+the arithmetic or decide whether a hard gate can be waived.
 
-**One rule and what breaks without it.** *R3: `eventBus.emit(EventTypes.SLA_BREACH, payload)` is the only permitted cross-module trigger; importing `AlertService`
-(or any `reports` class) from another module is a hard-gate failure (ArchUnit `A3`).* Without it the Generator takes the shortest path — calling the notification
-service directly — which recreates FM4: `activities` becomes coupled to `alerts`, delivery rules cannot change without touching activities, and circular
-imports appear as soon as `alerts` reads an activity.
+Automated results are not inferred from previous `target/` output. Commands
+must run against the current source; an unavailable Maven or Docker binary is
+recorded as BLOCKED. LLM reviewers must return one PASS/FAIL result per
+check and cite path:line evidence; ambiguous or missing output is BLOCKED.
+The verdict script rejects missing IDs and passing results without evidence.
+A summary or screenshot cannot replace a test log. CI re-runs automated
+checks as a separate second line.
 
-**CI/CD relationship.** The harness *precedes and feeds* CI: the Evaluator runs the same `mvn -B verify` as the pipeline, so violations are caught before a PR, and CI re-runs it
-as the independent second line. The harness adds LLM-assessed checks CI cannot express. Harness files live in `.harness/`, pipeline files in `.github/`.
+**Deterministic walkthrough.** The Generator may produce two otherwise
+identical diffs. In one, the AC-2.1 test asserts only `status().isMultiStatus()`;
+in the other it asserts result ordering, persisted status, and audit count.
+T3 is FAIL for the first and PASS for the second, with test-line evidence.
+Given the first result file, the script records a hard-gate failure and
+returns FAIL even if all other weighted checks pass. Re-running the script on
+the same CSV gives the identical score and verdict; prose cannot override it.
 
-## C. Non-Determinism Strategy
+## D. Architectural decisions and trade-offs
 
-**Dimensions.** D1 Architectural Compliance **55%**, D2 Test & Build Quality **45%**. Three of the four client failure modes are architectural, so D1 weighs more;
-D2 carries FM3 and build health.
+**D1. Deterministic scoring script.** Alternatives were to let the Evaluator
+calculate the score or grade the entire change qualitatively. The script was
+selected because identical result files must produce identical verdicts.
+The assumption is that the CSV check IDs and evidence fields remain the
+stable interface; configuration changes must update the script in the same
+reviewed change.
 
-**Hard gates (each prevents one named failure; none can be soft).**
+**D2. Service-first, two-sprint work.** Alternatives were one sprint mixing
+all layers or one sprint per file. A single sprint would create a large
+diff mixing item semantics, authorization, HTTP mapping, and test gaps.
+Per-file sprints add handoff overhead without meaningful risk reduction.
+Two sprints give a stable business layer to integrate and an explicit
+dependency. The assumption is that the REST boundary can be tested against
+the service contract without changing its business rules.
 
-| Gate | Tool | Prevents | Why not soft |
-|---|---|---|---|
-| A1 module boundary | ArchUnit | FM1 repository bypass | a single bypass breaks the service boundary; scoring it invites trading it off against coverage |
-| A2 raw throws | Checkstyle `RawThrow` + ArchUnit | FM2 | raw exceptions skip `GlobalExceptionHandler` → 500s, lost codes |
-| A3 event bus only | ArchUnit | FM4 | direct calls re-couple modules |
-| A4 layering | ArchUnit | logic in wrong layer | not fixable by review comments later |
-| A5 reports read-only | LLM + evidence | write from reports | integrity |
-| T1 build green / T2 coverage | Maven / JaCoCo | broken or under-tested code | contract with the standards team |
-| T3 AC→business assertion | LLM + evidence | **FM3** | only LLM-assessable rule, so made strict: evidence required, ambiguity = FAIL |
-
-**Variable → deterministic.** (1) Everything measurable is measured by a tool and written to `checks.env` by a script. (2) LLM judgement is confined to seven yes/no questions;
-`PASS` is accepted only with `<ID>_EVIDENCE=file:line`, otherwise the script records FAIL. (3) The Evaluator never computes the verdict: `compute-verdict.sh` does, from `checks.env`.
-(4) Malformed Evaluator output is treated as FAIL by the orchestrator.
-
-**Worked example.** Generator output *X*: all tools green; A6–A8, T4–T6 PASS; T3 → Evaluator finds AC-1.3 asserted only `status().isOk()` and writes `T3=FAIL`.
-Script: hard gate T3 failed ⇒ `VERDICT: FAIL` even though the score is 92. Re-running `compute-verdict.sh` on the same `checks.env` yields byte-identical output (checked with md5 on repeated runs; keep a sample under `.harness/reviews/` as evidence). Output *Y*: two soft checks fail (A6, A7), no hard gate fails ⇒ score 86 ⇒ `PASS`
-(`CONDITIONAL PASS` would need 70–84).
-
-**Escalation.** Triggered by the 3rd consecutive `FAIL` in a sprint. The orchestrator writes `.harness/output/escalation.md` (sprint, iterations, last score, blocking gates, recurring failures,
-suspected root cause class, one recommended human action, resume commands). It goes to the developer who started the run; the Monitor also logs `ESCALATION: TRUE` in
-`.harness/reviews/` for the standards team. Expected response: fix the contract/skill/tooling, then `CONTINUE` or `REPLAN`.
-
-## D. Architectural Decisions
-
-**D1. A script owns the verdict, not the Evaluator LLM.**
-Alternatives: (a) LLM computes score and verdict; (b) LLM assesses everything with a rubric; (c) script computes from check results (chosen).
-Rationale: identical check results must give identical verdicts; arithmetic is the first thing LLM leniency erodes. *Assumption:* check ids and the evidence requirement are enforced
-by the script, and the Evaluator cannot edit `.harness/scripts` (denied in `.claude/settings.json`).
-
-**D2. ArchUnit for FM1/FM3-adjacent boundaries instead of Checkstyle ImportControl or an LLM check.**
-Alternatives: Checkstyle `ImportControl` (import-text only, misses fully-qualified usages and transitive structure), LLM review (non-deterministic).
-Rationale: ArchUnit analyses bytecode, handles slices/cycles, and runs in `mvn test` so CI gets it free. *Assumption:* package-per-module naming (`com.storeops.<module>.<layer>`) is kept;
-a renamed package silently weakens the rules, which is why each rule is parameterised by module name and the Monitor watches for gate drift.
-
-**D3. Two-sprint split (service-first, HTTP-second) with a hard cap of 3 iterations.**
-Alternatives: one sprint per feature; one sprint per layer-file. Rationale: single sprint hides root causes and inflates diffs; per-file sprints multiply Evaluator cost. Three iterations
-balances recovery against runaway cost. *Assumption:* a feature of this size yields ≤6 ACs per sprint and the Generator converges within three feedback rounds; if the Monitor shows
-average iterations ≥2.5 over several sprints, the cause is skill-file gaps, not the cap.
+**D3. Three-iteration cap and approval gate.** Alternatives were unlimited
+repair loops or developer review after every iteration. A cap of three
+limits cost and creates a named human escalation point; exact `APPROVED`
+after `AWAITING APPROVAL` keeps unresolved API assumptions out of generated
+code. The assumption is that a human is available to resolve recurring
+contract/tooling failures. On the third FAIL, the orchestrator records the
+blocking gates and action in `escalation.md` and stops.

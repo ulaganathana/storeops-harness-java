@@ -1,41 +1,26 @@
-# Skill: StoreOps coding conventions (Generator)
+# Coding conventions
 
-**Purpose:** concrete Java/Spring rules for new StoreOps code. Follow the existing activities module as the reference implementation.
-
-## Package layout
-`com.storeops.<module>.{controller,service,repository,model}`. New module = same four sub-packages. Shared code only in `com.storeops.shared.{error,event}`.
-Repository = interface `XRepository` + `InMemoryXRepository` (`@Repository`). Tests mirror packages under `src/test/java/com/storeops/<module>/`.
-
-## Naming
-`XController`, `XService`, `XRepository`, request records `CreateXRequest`/`UpdateXRequest`/`BulkXRequest`, enums singular upper-snake values.
-Event types are `UPPER_SNAKE` constants in `EventTypes`.
-
-## Layer responsibilities
-- **controller:** `@RestController`, `@RequestMapping("/api/<module>")`, read `@RequestHeader("X-Staff-Id")`, `@Valid @RequestBody`, delegate to **one** service call. No `if` business rules.
-- **service:** all business rules, authorization by `StaffRole`, validation beyond bean validation, event emission. Constructor injection only.
-- **repository:** data access only, in-memory `ConcurrentHashMap`. No HTTP types, no service calls, no events.
-
-## Errors (FM2)
-```java
-return repository.findById(id).orElseThrow(() -> new NotFoundError("Activity", id));   // 404 NOT_FOUND
-throw new ConflictError("Activity '" + id + "' is DONE and cannot be reopened");       // 409 CONFLICT
-throw new ForbiddenError("Only the owner or a store manager can delete ...");          // 403 FORBIDDEN
-throw new ValidationError("ids must not be empty");                                    // 400 VALIDATION_ERROR
-```
-Need a new error kind? Add a subclass of `AppError` in `shared.error` — never throw a raw exception, never catch-and-rethrow as `RuntimeException`.
-`GlobalExceptionHandler` is the only place that maps errors to HTTP.
-
-## Events (FM4)
-```java
-Map<String,Object> payload = new HashMap<>();
-payload.put("activityId", saved.getId()); payload.put("from", prev.name()); payload.put("to", saved.getStatus().name());
-eventBus.emit(EventTypes.ACTIVITY_STATUS_CHANGED, payload);
-```
-Emit **after** the repository save succeeds. `Map.of` rejects nulls — use `HashMap` when a value may be null. Consumers use `@EventListener` on `DomainEvent`
-inside their own module; the emitting module never references the consumer.
-
-## Cross-module reads
-Allowed: `staffService.getById(id)` (service layer, read-only). Forbidden: any `*.repository` of another module (FM1).
-
-## Static analysis you must keep clean
-Checkstyle (`UnusedImports`, `AvoidStarImport`, `RawThrow`), SpotBugs (threshold High). No `System.out`, no wildcard imports, no unused imports. Do not edit `config/` or `pom.xml`.
+- Java 21, four-space indentation, existing `com.storeops.<module>.<layer>`
+  package layout, constructor injection, immutable records for transport and
+  value data where suitable.
+- Follow nearby naming and Spring MVC patterns. Keep routes thin and put
+  validation/business rules in the service.
+- Use `jakarta.validation` for request-shape constraints; enforce
+  cross-field/domain rules in the service with `ValidationError`.
+- Use `NotFoundError`, `ValidationError`, `ConflictError`, and
+  `ForbiddenError` for their corresponding outcomes. Do not leak repository
+  implementation exceptions or use raw throws in route/service packages.
+- Scope every activity lookup and mutation to `CurrentUser.storeId()`. Do not
+  trust a store identifier supplied in the request.
+- For bulk results, retain request order, return a result for every requested
+  item, and represent item failures with stable error codes and safe messages.
+  A failed item must not prevent later items from being processed.
+- Persist one audit record for each successful status transition, recording
+  activity ID, actor ID, prior/new status, and timestamp. Do not record an
+  audit entry for a failed item or a no-op unless the approved contract says
+  otherwise.
+- Avoid importing peer feature packages. Reuse `EventBus` only for actual
+  cross-module notification; it is not the audit store.
+- Add focused service tests for each branch and MockMvc tests for body,
+  authentication, response shape, and store isolation. Update directly
+  affected API documentation.

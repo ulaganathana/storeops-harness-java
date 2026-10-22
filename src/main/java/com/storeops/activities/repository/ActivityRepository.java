@@ -1,15 +1,35 @@
 package com.storeops.activities.repository;
 
 import com.storeops.activities.model.Activity;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.stereotype.Repository;
 
-public interface ActivityRepository {
-    List<Activity> findAll();
+@Repository
+public class ActivityRepository {
 
-    Optional<Activity> findById(String id);
+    private final Map<String, Activity> activities = new ConcurrentHashMap<>();
 
-    Activity save(Activity activity);
+    public List<Activity> findByStoreId(String storeId) {
+        return activities.values().stream()
+                .filter(activity -> activity.storeId().equals(storeId))
+                .sorted(Comparator.comparing(Activity::createdAt).thenComparing(Activity::id))
+                .toList();
+    }
 
-    boolean deleteById(String id);
+    public Optional<Activity> findById(String id) {
+        return Optional.ofNullable(activities.get(id));
+    }
+
+    public Activity save(Activity activity) {
+        activities.put(activity.id(), activity);
+        return activity;
+    }
+
+    public void deleteById(String id) {
+        activities.remove(id);
+    }
 }

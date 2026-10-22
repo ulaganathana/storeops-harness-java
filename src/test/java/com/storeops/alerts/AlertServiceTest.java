@@ -1,52 +1,36 @@
 package com.storeops.alerts;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.storeops.alerts.model.AlertType;
-import com.storeops.alerts.model.Notification;
-import com.storeops.alerts.repository.InMemoryAlertRepository;
+import com.storeops.alerts.model.Alert;
+import com.storeops.alerts.repository.AlertRepository;
 import com.storeops.alerts.service.AlertService;
-import com.storeops.shared.event.DomainEvent;
-import com.storeops.shared.event.EventTypes;
-import java.time.Instant;
-import java.util.Map;
-import org.junit.jupiter.api.BeforeEach;
+import com.storeops.common.events.DomainEvent;
+import com.storeops.common.events.EventType;
+import com.storeops.common.events.InMemoryEventBus;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class AlertServiceTest {
-    private AlertService service;
 
-    @BeforeEach
-    void setUp() {
-        service = new AlertService(new InMemoryAlertRepository());
-    }
-
-    private DomainEvent event(String type, Map<String, Object> payload) {
-        return new DomainEvent(type, payload, Instant.now());
-    }
+    private final InMemoryEventBus eventBus = new InMemoryEventBus();
+    private final AlertService service = new AlertService(new AlertRepository(), eventBus);
 
     @Test
-    void slaBreachCreatesAlertForRecipientOnly() {
-        service.onEvent(event(EventTypes.SLA_BREACH, Map.of("recipientId", "s-2", "activityId", "a-1")));
-        assertThat(service.forUser("s-2")).hasSize(1);
-        assertThat(service.forUser("s-2").get(0).type()).isEqualTo(AlertType.SLA_BREACH);
-        assertThat(service.forUser("s-1")).isEmpty();
-    }
+    void eventsBecomeUnreadAlertsForTheirRecipientOnly() {
+        service.registerSubscriptions();
 
-    @Test
-    void blockedStatusChangeEscalatesToOwner() {
-        service.onEvent(event(EventTypes.ACTIVITY_STATUS_CHANGED,
-            Map.of("to", "BLOCKED", "ownerId", "s-1", "activityId", "a-1")));
-        Notification n = service.forUser("s-1").get(0);
-        assertThat(n.type()).isEqualTo(AlertType.ESCALATION);
-        assertThat(n.message()).contains("a-1");
-    }
+        eventBus.publish(DomainEvent.of(EventType.ACTIVITY_ASSIGNED, "u-2", "first"));
+        eventBus.publish(DomainEvent.of(EventType.PROGRAMME_MEMBER_ADDED, "u-2", "second"));
+        eventBus.publish(DomainEvent.of(EventType.ACTIVITY_STATUS_CHANGED, "u-2", "third"));
+        eventBus.publish(DomainEvent.of(EventType.ACTIVITY_ASSIGNED, "u-1", "other"));
 
-    @Test
-    void unrelatedEventsAndNonBlockedChangesCreateNoAlerts() {
-        service.onEvent(event(EventTypes.ACTIVITY_CREATED, Map.of("activityId", "a-1")));
-        service.onEvent(event(EventTypes.ACTIVITY_STATUS_CHANGED, Map.of("to", "DONE", "ownerId", "s-1")));
-        service.onEvent(event(EventTypes.SLA_BREACH, Map.of("activityId", "a-1")));
-        assertThat(service.forUser("s-1")).isEmpty();
+        List<Alert> alerts = service.listForUser("u-2");
+        assertEquals(3, alerts.size());
+        assertFalse(alerts.get(0).read());
+        assertEquals(1, service.listForUser("u-1").size());
+        assertTrue(service.listForUser("u-3").isEmpty());
     }
 }

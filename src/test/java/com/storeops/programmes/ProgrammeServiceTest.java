@@ -1,83 +1,67 @@
 package com.storeops.programmes;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.storeops.programmes.model.AddMemberRequest;
+import com.storeops.common.error.ConflictError;
+import com.storeops.common.error.NotFoundError;
+import com.storeops.common.error.ValidationError;
+import com.storeops.common.events.DomainEvent;
+import com.storeops.common.events.EventType;
+import com.storeops.common.events.InMemoryEventBus;
+import com.storeops.common.security.CurrentUser;
 import com.storeops.programmes.model.CreateProgrammeRequest;
 import com.storeops.programmes.model.Project;
 import com.storeops.programmes.model.ProjectRole;
-import com.storeops.programmes.repository.InMemoryProgrammeRepository;
+import com.storeops.programmes.repository.ProgrammeRepository;
 import com.storeops.programmes.service.ProgrammeService;
-import com.storeops.shared.RecordingEventBus;
-import com.storeops.shared.error.ConflictError;
-import com.storeops.shared.error.ForbiddenError;
-import com.storeops.shared.error.NotFoundError;
-import com.storeops.shared.event.EventTypes;
-import com.storeops.staff.repository.InMemoryStaffRepository;
+import com.storeops.staff.repository.StaffRepository;
 import com.storeops.staff.service.StaffService;
-import org.junit.jupiter.api.BeforeEach;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ProgrammeServiceTest {
-    private RecordingEventBus bus;
-    private ProgrammeService service;
 
-    @BeforeEach
-    void setUp() {
-        bus = new RecordingEventBus();
-        service = new ProgrammeService(new InMemoryProgrammeRepository(), bus,
-            new StaffService(new InMemoryStaffRepository()));
+    private final InMemoryEventBus eventBus = new InMemoryEventBus();
+    private final StaffService staff = new StaffService(new StaffRepository());
+    private final ProgrammeService service = new ProgrammeService(new ProgrammeRepository(), staff, eventBus);
+    private final List<DomainEvent> events = new ArrayList<>();
+    private final CurrentUser manager = staff.findById("u-1").orElseThrow();
+    private final CurrentUser otherStore = staff.findById("u-3").orElseThrow();
+
+    ProgrammeServiceTest() {
+        eventBus.subscribe(EventType.PROGRAMME_MEMBER_ADDED, events::add);
     }
 
     @Test
-    void createScopesProgrammeToCallersStoreAndEmitsEvent() {
-        Project p = service.create("s-1", new CreateProgrammeRequest("Summer rollout"));
-        assertThat(p.getStoreId()).isEqualTo("store-1");
-        assertThat(bus.ofType(EventTypes.PROGRAMME_CREATED)).hasSize(1);
-        assertThat(service.listForStore("s-2")).hasSize(1);
-        assertThat(service.listForStore("s-4")).isEmpty();
+    void createAndListAreScopedToTheCallersStore() {
+        service.create(manager, new CreateProgrammeRequest("Zeta", "d"));
+        service.create(manager, new CreateProgrammeRequest("Alpha", "d"));
+        service.create(otherStore, new CreateProgrammeRequest("Elsewhere", "d"));
+
+        List<Project> storeOne = service.list(manager);
+        assertEquals(2, storeOne.size());
+        assertEquals("Alpha", storeOne.get(0).name());
+        assertEquals(1, service.list(otherStore).size());
     }
 
     @Test
-    void associateCannotCreateProgramme() {
-        assertThatThrownBy(() -> service.create("s-3", new CreateProgrammeRequest("x")))
-            .isInstanceOf(ForbiddenError.class);
-    }
+    void addMemberPublishesAnEventAndRejectsInvalidRequests() {
+        Project programme = service.create(manager, new CreateProgrammeRequest("Training", "d"));
 
-    @Test
-    void addMemberStoresMemberAndEmitsEvent() {
-        Project p = service.create("s-1", new CreateProgrammeRequest("Refit"));
-        bus.events().clear();
-        Project updated = service.addMember("s-1", p.getId(), new AddMemberRequest("s-3", ProjectRole.ASSOCIATE));
-        assertThat(updated.getMembers()).extracting("staffId").containsExactly("s-3");
-        assertThat(bus.ofType(EventTypes.MEMBER_ADDED)).hasSize(1);
-        assertThat(bus.events().get(0).payload()).containsEntry("staffId", "s-3");
-    }
+        Project updated = service.addMember(manager, programme.id(), "u-2");
+        assertTrue(updated.hasMember("u-2"));
+        assertEquals(ProjectRole.ASSOCIATE, updated.members().get(0).role());
+        assertEquals(1, events.size());
+        assertEquals("u-2", events.get(0).recipientId());
 
-    @Test
-    void duplicateMemberIsConflict() {
-        Project p = service.create("s-1", new CreateProgrammeRequest("Refit"));
-        service.addMember("s-1", p.getId(), new AddMemberRequest("s-3", ProjectRole.ASSOCIATE));
-        assertThatThrownBy(() -> service.addMember("s-1", p.getId(), new AddMemberRequest("s-3", ProjectRole.ASSOCIATE)))
-            .isInstanceOf(ConflictError.class);
-    }
-
-    @Test
-    void nonOwnerNonManagerCannotAddMember() {
-        Project p = service.create("s-2", new CreateProgrammeRequest("Drive"));
-        assertThatThrownBy(() -> service.addMember("s-3", p.getId(), new AddMemberRequest("s-1", ProjectRole.ASSOCIATE)))
-            .isInstanceOf(ForbiddenError.class);
-        assertThatThrownBy(() -> service.addMember("s-4", p.getId(), new AddMemberRequest("s-1", ProjectRole.ASSOCIATE)))
-            .isInstanceOf(ForbiddenError.class);
-    }
-
-    @Test
-    void addMemberToMissingProgrammeOrUnknownStaffIsNotFound() {
-        assertThatThrownBy(() -> service.addMember("s-1", "nope", new AddMemberRequest("s-3", ProjectRole.ASSOCIATE)))
-            .isInstanceOf(NotFoundError.class);
-        Project p = service.create("s-1", new CreateProgrammeRequest("Refit"));
-        assertThatThrownBy(() -> service.addMember("s-1", p.getId(), new AddMemberRequest("ghost", ProjectRole.ASSOCIATE)))
-            .isInstanceOf(NotFoundError.class);
+        assertThrows(ConflictError.class, () -> service.addMember(manager, programme.id(), "u-2"));
+        assertThrows(ValidationError.class, () -> service.addMember(manager, programme.id(), "u-3"));
+        assertThrows(NotFoundError.class, () -> service.addMember(manager, programme.id(), "u-999"));
+        assertThrows(NotFoundError.class, () -> service.addMember(manager, "prg-missing", "u-2"));
+        assertThrows(NotFoundError.class, () -> service.addMember(otherStore, programme.id(), "u-3"));
+        assertEquals(1, events.size());
     }
 }

@@ -1,0 +1,8 @@
+{
+  "dimensions": {
+    "D1": { "name": "Architectural Compliance", "weight": 55 },
+    "D2": { "name": "Test and Build Quality", "weight": 45 }
+  },
+  "passThreshold": 85,
+  "conditionalThreshold": 70
+}

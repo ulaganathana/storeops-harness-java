@@ -1,3 +1,8 @@
 package com.storeops.alerts.model;
 
-public enum NotificationStatus { UNREAD, READ }
+public enum NotificationStatus {
+    PENDING,
+    SENT,
+    FAILED,
+    READ
+}
